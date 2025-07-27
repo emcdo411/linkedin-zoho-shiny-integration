@@ -9,6 +9,7 @@ library(shinyjs)
 library(plotly)
 library(lubridate)
 library(writexl)
+library(tidyr)  # ✅ This fixes the complete() error
 
 # Configuration
 options(googlesheets4_quiet = TRUE)
