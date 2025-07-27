@@ -1,0 +1,51 @@
+name: Sync Leads and Rebuild RShiny Dashboard
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # Run hourly
+  workflow_dispatch:     # Allow manual runs from GitHub UI
+
+jobs:
+  sync-leads:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+
+      - name: Install R packages
+        run: |
+          Rscript -e "install.packages(c('httr', 'jsonlite', 'googlesheets4'), repos='http://cran.r-project.org')"
+
+      - name: Run Zoho CRM pull script
+        run: Rscript zoho_api/zoho_pull_script.R
+
+      - name: Commit updated lead data
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/leads_google_sync.csv
+          git commit -m "Lead sync: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" || echo "No changes to commit"
+          git push
+
+      - name: Log sync event
+        run: |
+          echo "$(date -u +'%Y-%m-%d %H:%M:%S UTC') - Sync successful." >> logs/sync_log.txt
+          git add logs/sync_log.txt
+          git commit -m "Sync log update" || echo "No log changes"
+          git push
+
+      - name: OPTIONAL: Trigger Shiny app rebuild
+        run: echo "Trigger placeholder – implement deployment hook or notification here"
+
+  notify-failure:
+    needs: sync-leads
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: Email on Failure
+        run: |
+          echo -e "Subject: ❌ GitHub Actions Sync Failed\n\nCheck the workflow logs for details." | sendmail moe.mcdonald@gmail.com
