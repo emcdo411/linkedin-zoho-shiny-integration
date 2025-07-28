@@ -1,41 +1,52 @@
-# zoho_pull_script.R
+library(httr)
 library(jsonlite)
-library(readr)
 library(dplyr)
-library(lubridate)
+library(purrr)
 
-# Load mock API token config
-zoho_token <- jsonlite::fromJSON("../config/zoho_keys.json")$access_token
+# Load saved tokens
+tokens <- fromJSON("config/zoho_keys.json")
 
-# Simulate pulling new leads from an API (here, hardcoded)
-new_leads <- data.frame(
-  FirstName = c("Brian", "Fatima"),
-  LastName = c("Douglas", "Khan"),
-  Email = c("bdouglas@example.com", "fkhan@example.com"),
-  Title = c("UX Designer", "Security Analyst"),
-  Company = c("OrbitWorks", "DataForge"),
-  Source = c("LinkedIn", "Referral"),
-  Status = c("Warm", "Hot"),
-  Timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-  stringsAsFactors = FALSE
+# Refresh access token
+refresh_response <- POST(
+  url = "https://accounts.zoho.com/oauth/v2/token",
+  body = list(
+    refresh_token = tokens$refresh_token,
+    client_id = "1000.JLNWR2TV697Q1O7GHAT0AMWZBG16MF",
+    client_secret = "c7ac8a64641df6f6fd44361ee80a762dba3914c91c",
+    grant_type = "refresh_token"
+  ),
+  encode = "form"
 )
 
-# File path to the local sync CSV
-file_path <- "../data/leads_google_sync.csv"
+new_tokens <- content(refresh_response, as = "parsed", type = "application/json")
+access_token <- new_tokens$access_token
 
-# Read current leads if file exists
-if (file.exists(file_path)) {
-  existing_leads <- read_csv(file_path, show_col_types = FALSE)
+# Pull leads
+res <- GET(
+  url = "https://www.zohoapis.com/crm/v2/Leads",
+  add_headers(Authorization = paste("Zoho-oauthtoken", access_token))
+)
+
+leads <- content(res, as = "parsed", type = "application/json")$data
+
+# Handle empty response
+if (length(leads) == 0) {
+  cat("⚠️ No leads found in Zoho CRM.\n")
 } else {
-  existing_leads <- data.frame()
+  # Safely extract each field with NA fallback
+  leads_df <- map_df(leads, function(x) {
+    tibble(
+      Full_Name     = x$Full_Name %||% NA,
+      Email         = x$Email %||% NA,
+      Company       = x$Company %||% NA,
+      Phone         = x$Phone %||% NA,
+      Lead_Status   = x$Lead_Status %||% NA,
+      Created_Time  = x$Created_Time %||% NA
+    )
+  })
+  
+  dir.create("data", showWarnings = FALSE)
+  write.csv(leads_df, file = "data/leads_google_sync.csv", row.names = FALSE)
+  cat("✅ Leads pulled and written to data/leads_google_sync.csv\n")
 }
 
-# Combine and remove duplicates based on email
-all_leads <- bind_rows(existing_leads, new_leads) %>%
-  distinct(Email, .keep_all = TRUE)
-
-# Save back to CSV
-write_csv(all_leads, file_path)
-
-# Log action
-cat(paste(Sys.time(), "- Synced", nrow(new_leads), "new leads\n"))
